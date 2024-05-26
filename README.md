@@ -1,8 +1,8 @@
 # lisp-to-js
 
-This compiler translates Lisp into JavaScript.
+This compiler translates Lisp into JavaScript. The parser is written using the [pom](https://github.com/J-F-Liu/pom) library.
 
-It supports a Lisp that is very similar to Little Lisp.
+It supports a Lisp very similar to [Little Lisp](https://maryrosecook.com/blog/post/little-lisp-interpreter).
 
 ```lisp
 ; atoms
@@ -53,12 +53,6 @@ let print = console.log;
 let fib = (n) => (n < 2 ? n : fib(n - 1) + fib(n - 2));
 print(fib(10));
 ```
-
-<br>
-
-The parser is written using the [pom](https://github.com/J-F-Liu/pom) library.
-- Transforms the AST into JavaScript code, maintaining the structure and logic of the original Lisp code.
-- Outputs JavaScript code that can be executed in any JavaScript environment.
 
 <br>
 
