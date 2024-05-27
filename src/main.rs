@@ -196,8 +196,9 @@ fn compile_expression(expression: Expression) -> String {
             }
         }
         Expression::LetExpression(let_expression) => {
+            let mut bound_area = "(() => {\n".to_string();
             let_expression.bindings.into_iter().for_each(|binding| {
-                ret.push_str(&format!(
+                bound_area.push_str(&format!(
                     "let {} = {};",
                     binding.symbol,
                     compile_expression(binding.expression)
@@ -207,8 +208,10 @@ fn compile_expression(expression: Expression) -> String {
                 .expressions
                 .into_iter()
                 .for_each(|expression| {
-                    ret.push_str(&compile_expression(expression));
+                    bound_area.push_str(&compile_expression(expression));
                 });
+            bound_area.push_str("\n})()");
+            ret.push_str(&bound_area);
         }
         Expression::LambdaExpression(lambda_expression) => {
             let params = lambda_expression.parameters.join(",");
@@ -313,6 +316,23 @@ mod tests {
     }
 
     #[test]
+    fn test_bindings_in_func() {
+        assert_eq!(
+            format!(
+                "{:?}",
+                compile(
+                    program()
+                        .parse(
+                            b"(let ((a (lambda () (let ((b 1)) b)))) (print (a)))"
+                        )
+                        .unwrap()
+                )
+            ),
+            "\"/* lisp-to-js */\\nlet print = console.log;\\n\\n\\n(() => {\\nlet a =  (() => (() => {\\nlet b = 1; b \\n})()\\n)\\n; print ( a (), )\\n})()\""
+        );
+    }
+
+    #[test]
     fn test_compile_fib() {
         assert_eq!(
             format!(
@@ -329,7 +349,7 @@ mod tests {
                         .unwrap()
                 )
             ),
-            "\"/* lisp-to-js */\\nlet print = console.log;\\n\\n\\nlet fib =  ((n) =>  n  < 2 ?  n  : ( fib (( n -1), )+ fib (( n -2), ))\\n\\n)\\n; print ( fib (10, ), )\""
+            "\"/* lisp-to-js */\\nlet print = console.log;\\n\\n\\n(() => {\\nlet fib =  ((n) =>  n  < 2 ?  n  : ( fib (( n -1), )+ fib (( n -2), ))\\n\\n)\\n; print ( fib (10, ), )\\n})()\""
         );
     }
 }
