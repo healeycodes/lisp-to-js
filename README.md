@@ -1,11 +1,53 @@
 # lisp-to-js
-> My blog post: [Lisp to JavaScript Compiler](https://healeycodes.com/lisp-to-javascript-compiler)
+
+> My blog posts:
+>
+> - [Lisp to JavaScript Compiler](https://healeycodes.com/lisp-to-javascript-compiler)
+> - [Lisp Compiler Optimizations](https://healeycodes.com/lisp-compiler-optimizations)
 
 <br>
 
-This compiler translates Lisp into JavaScript. The parser is written using the [pom](https://github.com/J-F-Liu/pom) library.
+This compiler optimizes Lisp code and turns it into JavaScript.
 
-It supports a Lisp very similar to [Little Lisp](https://maryrosecook.com/blog/post/little-lisp-interpreter).
+The implemented optimizations are constant folding and propagation, and dead
+code elimination.
+
+```lisp
+; before optimization
+(let ((b 2) (c 3))
+  (print
+    (+
+      (+ b 4 c)
+      (- b c 7)
+  )))
+ 
+; after optimization
+(let () (print 1))
+```
+
+<br>
+
+It produces ES6 JavaScript. Here's an example:
+
+```js
+/*
+(let ((fib (lambda (n)
+    (if (< n 2)
+        n
+        (+ (fib (- n 1)) (fib (- n 2)))))))
+(print (fib 10)))
+*/
+
+let print = console.log;
+
+let fib = (n) => n < 2 ? n : (fib(n - 1) + fib(n - 2));
+print(fib(10));
+```
+
+<br>
+
+The Lisp variant is very similar to
+[Little Lisp](https://maryrosecook.com/blog/post/little-lisp-interpreter).
 
 ```lisp
 ; atoms
@@ -26,45 +68,21 @@ a ; symbols
 
 ; variable definition
 (let ((a 1)) (print a)) ; prints 1
-(let ((double (lambda (x) (+ x x))) (double 2))) ; 4
-```
-
-It produces ES6 JavaScript. Here's an example:
-
-```js
-/*
-(let ((fib (lambda (n)
-    (if (< n 2)
-        n
-        (+ (fib (- n 1)) (fib (- n 2)))))))
-(print (fib 10)))
-*/
-
-let print = console.log;
-
-let fib =  ((n) =>  n  < 2 ?  n  : ( fib (( n -1), )+ fib (( n -2), ))
-
-)
-; print ( fib (10, ), )
-```
-
-If you run this output through a tool like Prettier, you can see it's actually fairly sensible JavaScript:
-
-```js
-let print = console.log;
-
-let fib = (n) => (n < 2 ? n : fib(n - 1) + fib(n - 2));
-print(fib(10));
+(let ((double (lambda (x) (+ x x)))) (double 2)) ; 4
 ```
 
 <br>
 
 ### Running the Compiler
 
-To compile a Lisp file to JavaScript, run the following command:
+To compile Lisp code to JavaScript, run the following command:
 
 ```bash
-$ cargo run < fib10.lisp > fib10.js
+$ cargo run -- -o < fib10.lisp > fib10.js
 $ node fib10.js
 55
 ```
+
+Flags:
+
+- `-o` for optimization

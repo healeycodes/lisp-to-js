@@ -1,11 +1,13 @@
 use pom::parser::*;
 use std::{
+    collections::HashMap,
+    env,
     io::{stdin, Read},
     process::exit,
     str::{self, FromStr},
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Expression {
     Atom(Atom),
     List(Vec<Expression>),
@@ -15,44 +17,45 @@ enum Expression {
     ArithmeticExpression(Box<ArithmeticExpression>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Atom {
+    Boolean(bool),
     Number(f64),
     Symbol(String),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct LetExpression {
     bindings: Vec<Binding>,
     expressions: Vec<Expression>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Binding {
     symbol: String,
     expression: Expression,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct LambdaExpression {
     parameters: Vec<String>,
     expressions: Vec<Expression>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct IfExpression {
     check: Expression,
     r#true: Expression,
     r#false: Expression,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct ArithmeticExpression {
     op: Op,
     expressions: Vec<Expression>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Op {
     Plus,
     Minus,
@@ -155,7 +158,9 @@ fn if_expression<'a>() -> Parser<'a, u8, Expression> {
 }
 
 fn arithmetic_expression<'a>() -> Parser<'a, u8, Expression> {
-    (lparen() * one_of(b"+-<>") + expression().repeat(2..) - rparen()).map(|(op, expressions)| {
+    let sum_or_difference = one_of(b"+-") + expression().repeat(2..);
+    let lt_or_gt = one_of(b"<>") + expression().repeat(2);
+    (lparen() * (sum_or_difference | lt_or_gt) - rparen()).map(|(op, expressions)| {
         Expression::ArithmeticExpression(Box::new(ArithmeticExpression {
             op: match op {
                 b'+' => Op::Plus,
@@ -177,6 +182,10 @@ fn compile_expression(expression: Expression) -> String {
     let mut ret = String::new();
     match expression {
         Expression::Atom(a) => match a {
+            Atom::Boolean(b) => match b {
+                true => ret.push_str("true"),
+                false => ret.push_str("false"),
+            },
             Atom::Number(n) => ret.push_str(&n.to_string()),
             Atom::Symbol(s) => ret.push_str(&format!(" {} ", &s.to_string())),
         },
@@ -246,22 +255,12 @@ fn compile_expression(expression: Expression) -> String {
                     ret.push_str(&compiled_expressions.join("-"));
                     ret.push_str(")");
                 }
-                Op::LessThan => ret.push_str(
-                    &compiled_expressions
-                        .windows(2)
-                        .into_iter()
-                        .map(|expressions| expressions.join(" < "))
-                        .collect::<Vec<String>>()
-                        .join(" && "),
-                ),
-                Op::GreaterThan => ret.push_str(
-                    &compiled_expressions
-                        .windows(2)
-                        .into_iter()
-                        .map(|expressions| expressions.join(" > "))
-                        .collect::<Vec<String>>()
-                        .join(" && "),
-                ),
+                Op::LessThan => {
+                    ret.push_str(&compiled_expressions.join(" < "));
+                }
+                Op::GreaterThan => {
+                    ret.push_str(&compiled_expressions.join(" > "));
+                }
             }
         }
     };
@@ -286,21 +285,277 @@ let print = console.log;
     output
 }
 
+fn optimize(program: Vec<Expression>) -> Vec<Expression> {
+    return program
+        .into_iter()
+        .map(|expr| optimize_expression(expr, &mut HashMap::new()))
+        .collect();
+}
+
+// get_expr_from_context returns an atom mber from a context if it exists
+fn get_expr_from_context(
+    symbol: String,
+    context: &HashMap<String, Option<Expression>>,
+) -> Option<Atom> {
+    match context.get(&symbol) {
+        Some(expr) => match expr {
+            Some(expr) => match expr {
+                Expression::Atom(atom) => match atom {
+                    Atom::Number(n) => Some(Atom::Number(*n)),
+                    Atom::Boolean(b) => Some(Atom::Boolean(*b)),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        },
+        None => None,
+    }
+}
+
+fn optimize_expression(
+    expression: Expression,
+    context: &mut HashMap<String, Option<Expression>>,
+) -> Expression {
+    match expression {
+        // Only internal optimizations are possible
+        Expression::List(list_expr) => {
+            return Expression::List(
+                list_expr
+                    .into_iter()
+                    .map(|expr| optimize_expression(expr, context))
+                    .collect(),
+            )
+        }
+
+        // Only the internals of let expressions can be optimized.
+        // The bindings can be reduced to an empty list of bindings if they all fold into number assignments
+        // (let (a 1) a) -> (let () 1)
+        Expression::LetExpression(let_expr) => {
+            let mut optimized_bindings: Vec<Binding> = vec![];
+
+            let_expr.bindings.into_iter().for_each(|binding| {
+                let binding_expr = optimize_expression(binding.expression, context);
+
+                // When the expression we're about to bind is an atom, we can optimize the binding away
+                match binding_expr {
+                    Expression::Atom(ref atom) => match atom {
+                        // Insert literals, overwriting variables from any higher scopes.
+                        // Return before pushing the binding so it's removed from the AST
+                        Atom::Number(n) => {
+                            context
+                                .insert(binding.symbol, Some(Expression::Atom(Atom::Number(*n))));
+                            return;
+                        }
+                        Atom::Boolean(b) => {
+                            context
+                                .insert(binding.symbol, Some(Expression::Atom(Atom::Boolean(*b))));
+                            return;
+                        }
+
+                        // No need to overwrite symbols that refer to already-tracked and potentially optimized values
+                        Atom::Symbol(s) => match context.get(s) {
+                            Some(_) => return,
+                            None => {}
+                        },
+                    },
+                    _ => {}
+                }
+
+                // This binding can't be removed but may have been optimized internally
+                optimized_bindings.push(Binding {
+                    symbol: binding.symbol,
+                    expression: binding_expr,
+                })
+            });
+
+            return Expression::LetExpression(LetExpression {
+                bindings: optimized_bindings,
+                expressions: let_expr
+                    .expressions
+                    .into_iter()
+                    .map(|expr| optimize_expression(expr, context))
+                    .collect(),
+            });
+        }
+
+        // Only internal optimizations are possible
+        Expression::LambdaExpression(lambda_expr) => {
+            Expression::LambdaExpression(LambdaExpression {
+                parameters: lambda_expr.parameters,
+                expressions: lambda_expr
+                    .expressions
+                    .into_iter()
+                    .map(|expr| optimize_expression(expr, context))
+                    .collect(),
+            })
+        }
+
+        // The goal with if expressions is to remove the check and replace it with the winning branch
+        Expression::IfExpression(if_expr) => {
+            let check_expr = optimize_expression(if_expr.check, context);
+            match check_expr {
+                Expression::Atom(ref atom) => match atom {
+                    Atom::Boolean(b) => {
+                        if *b {
+                            return optimize_expression(if_expr.r#true, context);
+                        } else {
+                            return optimize_expression(if_expr.r#false, context);
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+            return Expression::IfExpression(Box::new(IfExpression {
+                check: optimize_expression(check_expr, context),
+                r#true: optimize_expression(if_expr.r#true, context),
+                r#false: optimize_expression(if_expr.r#false, context),
+            }));
+        }
+
+        // Arithmetic expressions can be replaced with atoms or reduced
+        // (+ 1 2) -> 3
+        // (+ 1 a 2) -> (+ a 3)
+        // (< 1 2) -> true
+        // (< 1 2 a) -> (< 1 a)
+        Expression::ArithmeticExpression(arth_expr) => {
+            let optimized_exprs: Vec<Expression> = arth_expr
+                .expressions
+                .into_iter()
+                .map(|expr| optimize_expression(expr, context))
+                .collect();
+
+            if optimized_exprs.len() < 2 {
+                unreachable!("parser (should) assume arithmetic expressions contain 2+ items")
+            }
+
+            let mut nums: Vec<f64> = vec![];
+            let mut optimized_exprs_without_numbers: Vec<Expression> = vec![];
+            for expr in &optimized_exprs {
+                match expr {
+                    Expression::Atom(atom) => match atom {
+                        Atom::Number(n) => nums.push(*n),
+                        Atom::Boolean(b) => optimized_exprs_without_numbers
+                            .push(Expression::Atom(Atom::Boolean(*b))),
+                        Atom::Symbol(s) => match get_expr_from_context(s.to_string(), context) {
+                            Some(atom) => match atom {
+                                Atom::Number(n) => nums.push(n),
+                                Atom::Boolean(_) => unreachable!("parser (should) have stopped a bool from entering an arithmetic expression"),
+                                Atom::Symbol(_) => unreachable!("optimizer shouldn't insert symbols into context"),
+                            },
+                            _ => optimized_exprs_without_numbers
+                                .push(Expression::Atom(Atom::Symbol(s.to_string()))),
+                        },
+                    },
+                    Expression::List(list_expr) => {
+                        optimized_exprs_without_numbers.push(Expression::List(list_expr.to_vec()))
+                    }
+                    Expression::LetExpression(let_expr) => optimized_exprs_without_numbers
+                        .push(Expression::LetExpression(let_expr.clone())),
+                    Expression::LambdaExpression(lambda_expr) => optimized_exprs_without_numbers
+                        .push(Expression::LambdaExpression(lambda_expr.clone())),
+                    Expression::IfExpression(if_expr) => optimized_exprs_without_numbers
+                        .push(Expression::IfExpression(if_expr.clone())),
+                    Expression::ArithmeticExpression(arth_expr) => optimized_exprs_without_numbers
+                        .push(Expression::ArithmeticExpression(arth_expr.clone())),
+                }
+            }
+
+            // When there are no literals (after optimization) we just return as-is
+            if nums.len() == 0 {
+                return Expression::ArithmeticExpression(Box::new(ArithmeticExpression {
+                    op: arth_expr.op,
+                    expressions: optimized_exprs,
+                }));
+            }
+
+            match arth_expr.op {
+                Op::Plus => {
+                    // Best case: no expressions after optimization, return atom
+                    if optimized_exprs_without_numbers.len() == 0 {
+                        return Expression::Atom(Atom::Number(nums.iter().sum()));
+                    }
+
+                    // Sum any literals, may reduce add-operations produced at code generation
+                    optimized_exprs_without_numbers
+                        .push(Expression::Atom(Atom::Number(nums.iter().sum())));
+                    return Expression::ArithmeticExpression(Box::new(ArithmeticExpression {
+                        op: arth_expr.op,
+                        expressions: optimized_exprs_without_numbers,
+                    }));
+                }
+                Op::Minus => {
+                    // Note: the minus expression isn't "negate all numbers"
+                    // it's minus all numbers from the first
+                    let first = *nums.first().unwrap_or(&0.0);
+                    let compressed =
+                        Atom::Number(nums.iter().skip(1).fold(first, |acc, &x| acc - x));
+
+                    // Best case: no expressions after optimization, return atom
+                    if optimized_exprs_without_numbers.len() == 0 {
+                        return Expression::Atom(compressed);
+                    }
+
+                    optimized_exprs_without_numbers.push(Expression::Atom(compressed));
+                    return Expression::ArithmeticExpression(Box::new(ArithmeticExpression {
+                        op: arth_expr.op,
+                        expressions: optimized_exprs_without_numbers,
+                    }));
+                }
+                Op::LessThan | Op::GreaterThan => {
+                    let compare_func: fn(f64, f64) -> bool = match arth_expr.op {
+                        Op::LessThan => lt,
+                        Op::GreaterThan => gt,
+                        _ => unreachable!(),
+                    };
+
+                    // Best case: after optimization the expression is redundant
+                    if optimized_exprs_without_numbers.len() == 0 {
+                        if nums.len() != 2 {
+                            unreachable!("parser (should) have ensured two expressions");
+                        }
+
+                        return Expression::Atom(Atom::Boolean(compare_func(nums[0], nums[1])));
+                    };
+
+                    return Expression::ArithmeticExpression(Box::new(ArithmeticExpression {
+                        op: arth_expr.op,
+                        expressions: optimized_exprs,
+                    }));
+                }
+            }
+        }
+        Expression::Atom(ref atom) => match atom {
+            Atom::Symbol(s) => match get_expr_from_context(s.to_string(), context) {
+                Some(atom) => return Expression::Atom(atom),
+                _ => return expression,
+            },
+            _ => return expression,
+        },
+    }
+}
+
 fn main() {
     let mut buffer = Vec::new();
     stdin()
         .read_to_end(&mut buffer)
         .expect("error reading from stdin");
 
-    let js_code = match (program()).parse(&buffer) {
+    let expressions = match (program()).parse(&buffer) {
         Err(e) => {
             eprintln!("{}", e);
             exit(1);
         }
-        Ok(ast) => compile(ast),
+        Ok(ast) => ast,
     };
 
-    println!("{}", js_code);
+    let args: Vec<String> = env::args().collect();
+    if args.contains(&"-o".to_string()) {
+        println!("{}", compile(optimize(expressions)));
+    } else {
+        println!("{}", compile(expressions));
+    }
 }
 
 #[cfg(test)]
@@ -352,4 +607,145 @@ mod tests {
             "\"/* lisp-to-js */\\nlet print = console.log;\\n\\n\\n(() => {\\nlet fib =  ((n) =>  n  < 2 ?  n  : ( fib (( n -1), )+ fib (( n -2), ))\\n\\n)\\n; print ( fib (10, ), )\\n})()\""
         );
     }
+
+    #[test]
+    fn test_optimize_add() {
+        assert_eq!(
+            format!("{:?}", optimize(program().parse(b"(+ 1 2)").unwrap())),
+            "[Atom(Number(3.0))]"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                optimize(program().parse(b"(let ((a 1)) (+ 1 a 2))").unwrap())
+            ),
+            "[LetExpression(LetExpression { bindings: [], expressions: [Atom(Number(4.0))] })]"
+        );
+    }
+
+    #[test]
+    fn test_optimize_sub() {
+        assert_eq!(
+            format!("{:?}", optimize(program().parse(b"(- 1 2)").unwrap())),
+            "[Atom(Number(-1.0))]"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                optimize(program().parse(b"(let ((a 1)) (- 1 a 2))").unwrap())
+            ),
+            "[LetExpression(LetExpression { bindings: [], expressions: [Atom(Number(-2.0))] })]"
+        );
+    }
+
+    #[test]
+    fn test_optimize_many() {
+        assert_eq!(
+            format!(
+                "{:?}",
+                optimize(program().parse(b"(if (< 2 1) 1 2)").unwrap())
+            ),
+            "[Atom(Number(2.0))]"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                optimize(program().parse(b"(if (> 2 1) 1 2)").unwrap())
+            ),
+            "[Atom(Number(1.0))]"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                optimize(
+                    program()
+                        .parse(
+                            b"(let ((a 1)) (let ((a 2)) a))"
+                        )
+                        .unwrap()
+                )
+            ),
+            "[LetExpression(LetExpression { bindings: [], expressions: [LetExpression(LetExpression { bindings: [], expressions: [Atom(Number(2.0))] })] })]"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                optimize(
+                    program()
+                        .parse(
+                            b"(let ((a 5) (b (+ a 5)) (c 10)) 
+                (print (if (> c 5) (+ a b) (- c 1))))"
+                        )
+                        .unwrap()
+                )
+            ),
+            "[LetExpression(LetExpression { bindings: [], expressions: [List([Atom(Symbol(\"print\")), Atom(Number(15.0))])] })]"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                optimize(
+                    program()
+                        .parse(
+                            b"(lambda (a) (let (a 2) (+ a 2 2)) (+ 5 5))"
+                        )
+                        .unwrap()
+                )
+            ),
+            "[LambdaExpression(LambdaExpression { parameters: [\"a\"], expressions: [List([Atom(Symbol(\"let\")), List([Atom(Symbol(\"a\")), Atom(Number(2.0))]), ArithmeticExpression(ArithmeticExpression { op: Plus, expressions: [Atom(Symbol(\"a\")), Atom(Number(4.0))] })]), Atom(Number(10.0))] })]"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                optimize(program().parse(b"(let ((a (if (< 1 2) 1 2))) a)").unwrap())
+            ),
+            "[LetExpression(LetExpression { bindings: [], expressions: [Atom(Number(1.0))] })]"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                optimize(program().parse(b"(let ((a 1)) (< 1 a))").unwrap())
+            ),
+            "[LetExpression(LetExpression { bindings: [], expressions: [Atom(Boolean(false))] })]"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                optimize(program().parse(b"(let ((a (+ 1 2))) (< 1 a))").unwrap())
+            ),
+            "[LetExpression(LetExpression { bindings: [], expressions: [Atom(Boolean(true))] })]"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                optimize(program().parse(b"(< a 1)").unwrap())
+            ),
+            "[ArithmeticExpression(ArithmeticExpression { op: LessThan, expressions: [Atom(Symbol(\"a\")), Atom(Number(1.0))] })]"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                optimize(program().parse(b"(let ((a (+ 1 2)))
+                (print (+ a a))
+              )").unwrap())
+            ),
+            "[LetExpression(LetExpression { bindings: [], expressions: [List([Atom(Symbol(\"print\")), Atom(Number(6.0))])] })]"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                optimize(program().parse(b"(let ((a (< 1 2))) a)").unwrap())
+            ),
+            "[LetExpression(LetExpression { bindings: [], expressions: [Atom(Boolean(true))] })]"
+        );
+        
+    }
+}
+
+fn gt<T: PartialOrd>(a: T, b: T) -> bool {
+    a > b
+}
+
+fn lt<T: PartialOrd>(a: T, b: T) -> bool {
+    a < b
 }
