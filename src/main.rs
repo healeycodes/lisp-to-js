@@ -108,7 +108,7 @@ fn expression<'a>() -> Parser<'a, u8, Expression> {
 
 fn let_expression<'a>() -> Parser<'a, u8, Expression> {
     (lparen() - seq(b"let"))
-        * (bindings() + expression().repeat(1..)).map(|(bindings, expressions)| {
+        * (bindings() + expression().repeat(0..)).map(|(bindings, expressions)| {
             Expression::LetExpression(LetExpression {
                 bindings,
                 expressions,
