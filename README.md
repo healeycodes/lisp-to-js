@@ -9,7 +9,7 @@
 
 This compiler optimizes Lisp code and turns it into JavaScript.
 
-Here's an example (the input code has been added as a comment):
+Here's an example:
 
 ```js
 /*
