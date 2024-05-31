@@ -9,25 +9,7 @@
 
 This compiler optimizes Lisp code and turns it into JavaScript.
 
-The implemented optimizations are constant folding and propagation, and dead
-code elimination.
-
-```lisp
-; before optimization
-(let ((b 2) (c 3))
-  (print
-    (+
-      (+ b 4 c)
-      (- b c 7)
-  )))
- 
-; after optimization
-(let () (print 1))
-```
-
-<br>
-
-It outputs JavaScript. Here's an example (the input code has been added as a comment):
+Here's an example (the input code has been added as a comment):
 
 ```js
 /*
@@ -42,6 +24,23 @@ let print = console.log;
 
 let fib = (n) => n < 2 ? n : (fib(n - 1) + fib(n - 2));
 print(fib(10));
+```
+
+<br>
+
+The implemented optimizations are constant folding and propagation, and dead code elimination. This stage runs before code generation.
+
+```lisp
+; before optimization
+(let ((b 2) (c 3))
+  (print
+    (+
+      (+ b 4 c)
+      (- b c 7)
+  )))
+ 
+; after optimization
+(let () (print 1))
 ```
 
 <br>
