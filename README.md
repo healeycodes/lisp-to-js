@@ -27,7 +27,7 @@ code elimination.
 
 <br>
 
-It produces ES6 JavaScript. Here's an example:
+It outputs JavaScript. Here's an example (the input code has been added as a comment):
 
 ```js
 /*
@@ -69,6 +69,18 @@ a ; symbols
 ; variable definition
 (let ((a 1)) (print a)) ; prints 1
 (let ((double (lambda (x) (+ x x)))) (double 2)) ; 4
+```
+
+<br>
+
+### Tests
+
+There are tests for parsing, optimization, and code generation. 
+
+Run:
+
+```bash
+cargo test
 ```
 
 <br>
