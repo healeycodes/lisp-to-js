@@ -1,9 +1,13 @@
 use pom::parser::*;
 use std::{
+    cell::RefCell,
     collections::HashMap,
     env,
+    error::Error,
+    fmt,
     io::{stdin, Read},
-    process::exit,
+    process::{self, exit},
+    rc::Rc,
     str::{self, FromStr},
 };
 
@@ -536,13 +540,459 @@ fn optimize_expression(
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum ByteCodeInstruction {
+    PushConst(f64),    // Pushes a constant (float) onto the stack
+    PushBool(bool),    // Pushes a boolean onto the stack
+    LoadVar(String),   // Loads a variable by its name
+    StoreVar(String),  // Stores the top of the stack into a variable
+    Add(usize),        // Adds n numbers on the stack
+    Sub(usize),        // Subtracts n numbers on the stack
+    LessThan,          // Compares top two stack values (x < y)
+    GreaterThan,       // Compares top two stack values (x > y)
+    Jump(usize),       // Unconditional jump
+    CallLambda(usize), // Calls a lambda expression with n arguments
+    PushClosure(Vec<String>, Vec<ByteCodeInstruction>), // Pushes a closure onto the stack
+}
+
+fn compile_byte_code(expressions: Vec<Expression>) -> Vec<ByteCodeInstruction> {
+    let mut bytecode = Vec::new();
+
+    for expr in expressions {
+        compile_byte_code_expression(&expr, &mut bytecode);
+    }
+
+    bytecode
+}
+
+fn compile_byte_code_expression(expr: &Expression, bytecode: &mut Vec<ByteCodeInstruction>) {
+    match expr {
+        Expression::Atom(atom) => compile_byte_code_atom(atom, bytecode),
+        Expression::List(list) => compile_byte_code_list(list, bytecode),
+        Expression::LetExpression(let_expr) => compile_byte_code_let(let_expr, bytecode),
+        Expression::LambdaExpression(lambda_expr) => {
+            compile_byte_code_lambda(lambda_expr, bytecode)
+        }
+        Expression::IfExpression(if_expr) => compile_byte_code_if(if_expr, bytecode),
+        Expression::ArithmeticExpression(arith_expr) => {
+            compile_byte_code_arithmetic(arith_expr, bytecode)
+        }
+    }
+}
+
+fn compile_byte_code_atom(atom: &Atom, bytecode: &mut Vec<ByteCodeInstruction>) {
+    match atom {
+        Atom::Boolean(val) => bytecode.push(ByteCodeInstruction::PushBool(*val)),
+        Atom::Number(num) => bytecode.push(ByteCodeInstruction::PushConst(*num)),
+        Atom::Symbol(sym) => bytecode.push(ByteCodeInstruction::LoadVar(sym.clone())),
+    }
+}
+
+fn compile_byte_code_list(list: &Vec<Expression>, bytecode: &mut Vec<ByteCodeInstruction>) {
+    if let Some((first, rest)) = list.split_first() {
+        // Compile arguments first
+        for expr in rest {
+            compile_byte_code_expression(expr, bytecode);
+        }
+
+        // Compile the function expression (e.g., a symbol for `print`)
+        compile_byte_code_expression(first, bytecode);
+
+        // Emit CallLambda with the number of arguments
+        bytecode.push(ByteCodeInstruction::CallLambda(rest.len()));
+    }
+}
+
+fn compile_byte_code_let(let_expr: &LetExpression, bytecode: &mut Vec<ByteCodeInstruction>) {
+    // Compile the bindings: store expressions in the variables
+    for binding in &let_expr.bindings {
+        compile_byte_code_expression(&binding.expression, bytecode);
+        bytecode.push(ByteCodeInstruction::StoreVar(binding.symbol.clone()));
+    }
+
+    // Compile the expressions within the `let` body
+    for expr in &let_expr.expressions {
+        compile_byte_code_expression(expr, bytecode);
+    }
+}
+
+fn compile_byte_code_lambda(
+    lambda_expr: &LambdaExpression,
+    bytecode: &mut Vec<ByteCodeInstruction>,
+) {
+    // Capture free variables (we assume all parameters are bound)
+    let mut closure_bytecode = Vec::new();
+
+    for expr in &lambda_expr.expressions {
+        compile_byte_code_expression(expr, &mut closure_bytecode);
+    }
+
+    // Push a closure with its captured parameters and bytecode
+    bytecode.push(ByteCodeInstruction::PushClosure(
+        lambda_expr.parameters.clone(),
+        closure_bytecode,
+    ));
+}
+
+fn compile_byte_code_if(if_expr: &IfExpression, bytecode: &mut Vec<ByteCodeInstruction>) {
+    // Compile the condition expression
+    compile_byte_code_expression(&if_expr.check, bytecode);
+
+    // Placeholder index for JumpIfFalse, to be patched later
+    let jump_if_false_pos = bytecode.len();
+    bytecode.push(ByteCodeInstruction::Jump(0)); // Placeholder
+
+    // Compile the true branch
+    compile_byte_code_expression(&if_expr.r#true, bytecode);
+
+    // Placeholder index for Jump, to skip the false branch
+    let jump_pos = bytecode.len();
+    bytecode.push(ByteCodeInstruction::Jump(0)); // Placeholder
+
+    // Patch the JumpIfFalse instruction to jump to the false branch
+    let current_pos = bytecode.len();
+    if let ByteCodeInstruction::Jump(ref mut jump_pos) = bytecode[jump_if_false_pos] {
+        *jump_pos = current_pos;
+    }
+
+    // Compile the false branch
+    compile_byte_code_expression(&if_expr.r#false, bytecode);
+
+    // Patch the Jump instruction to jump past the false branch
+    let current_pos = bytecode.len();
+    if let ByteCodeInstruction::Jump(ref mut jump_pos) = bytecode[jump_pos] {
+        *jump_pos = current_pos;
+    }
+}
+
+fn compile_byte_code_arithmetic(
+    arith_expr: &ArithmeticExpression,
+    bytecode: &mut Vec<ByteCodeInstruction>,
+) {
+    // Compile each expression in the arithmetic expression
+    for expr in &arith_expr.expressions {
+        compile_byte_code_expression(expr, bytecode);
+    }
+
+    // Emit the appropriate arithmetic operation
+    match arith_expr.op {
+        Op::Plus => bytecode.push(ByteCodeInstruction::Add(arith_expr.expressions.len())),
+        Op::Minus => bytecode.push(ByteCodeInstruction::Sub(arith_expr.expressions.len())),
+        Op::LessThan => bytecode.push(ByteCodeInstruction::LessThan),
+        Op::GreaterThan => bytecode.push(ByteCodeInstruction::GreaterThan),
+    }
+}
+
+fn debug_byte_code(byte_code: Vec<ByteCodeInstruction>, depth: usize) -> String {
+    let mut output = String::new();
+
+    for (index, instruction) in byte_code.iter().enumerate() {
+        if depth > 0 {
+            for _ in 0..depth {
+                output.push_str("    ");
+            }
+            output.push_str("->")
+        }
+        match instruction {
+            ByteCodeInstruction::PushConst(value) => {
+                output.push_str(&format!("{:>4}: PushConst({:.1})\n", index, value));
+            }
+            ByteCodeInstruction::PushBool(value) => {
+                output.push_str(&format!("{:>4}: PushBool({})\n", index, value));
+            }
+            ByteCodeInstruction::LoadVar(var_name) => {
+                output.push_str(&format!("{:>4}: LoadVar(\"{}\")\n", index, var_name));
+            }
+            ByteCodeInstruction::StoreVar(var_name) => {
+                output.push_str(&format!("{:>4}: StoreVar(\"{}\")\n", index, var_name));
+            }
+            ByteCodeInstruction::Add(n) => {
+                output.push_str(&format!("{:>4}: Add({})\n", index, n));
+            }
+            ByteCodeInstruction::Sub(n) => {
+                output.push_str(&format!("{:>4}: Sub({})\n", index, n));
+            }
+            ByteCodeInstruction::LessThan => {
+                output.push_str(&format!("{:>4}: LessThan\n", index));
+            }
+            ByteCodeInstruction::GreaterThan => {
+                output.push_str(&format!("{:>4}: GreaterThan\n", index));
+            }
+            ByteCodeInstruction::Jump(target) => {
+                let detail = match target >= &byte_code.len() {
+                    true => "exit",
+                    false => &format!("go to {}", target),
+                };
+                output.push_str(&format!("{:>4}: Jump({}) // {}\n", index, target, detail));
+            }
+            ByteCodeInstruction::CallLambda(arg_count) => {
+                output.push_str(&format!("{:>4}: CallLambda({})\n", index, arg_count));
+            }
+            ByteCodeInstruction::PushClosure(params, instructions) => {
+                output.push_str(&format!("{:>4}: PushClosure({:?})\n", index, params));
+                output.push_str(&debug_byte_code(instructions.to_vec(), depth + 1));
+            }
+        }
+    }
+
+    output
+}
+
+#[derive(Debug)]
+struct RuntimeError {
+    details: String,
+}
+
+impl RuntimeError {
+    fn new(msg: &str) -> RuntimeError {
+        RuntimeError {
+            details: msg.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for RuntimeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.details)
+    }
+}
+
+impl Error for RuntimeError {
+    fn description(&self) -> &str {
+        &self.details
+    }
+}
+
+#[derive(Debug, Clone)]
+enum StackValue {
+    Number(f64),
+    Bool(bool),
+    Closure(Vec<String>, Vec<ByteCodeInstruction>),
+    BuiltinFunction(fn(Vec<StackValue>) -> Result<(), RuntimeError>),
+}
+
+#[derive(Clone)]
+struct StackFrame {
+    parent: Option<Rc<RefCell<StackFrame>>>,
+    variables: HashMap<String, StackValue>,
+}
+
+impl StackFrame {
+    fn new() -> Rc<RefCell<StackFrame>> {
+        Rc::new(RefCell::new(StackFrame {
+            parent: None,
+            variables: HashMap::new(),
+        }))
+    }
+
+    fn child(parent: Rc<RefCell<StackFrame>>) -> Rc<RefCell<StackFrame>> {
+        Rc::new(RefCell::new(StackFrame {
+            parent: Some(parent),
+            variables: HashMap::new(),
+        }))
+    }
+
+    fn store(&mut self, variable: String, value: StackValue) {
+        self.variables.insert(variable, value);
+    }
+
+    fn look_up(&self, variable: &str) -> Result<StackValue, RuntimeError> {
+        match self.variables.get(variable) {
+            Some(value) => Ok(value.clone()),
+            None => match &self.parent {
+                Some(parent) => parent.borrow().look_up(variable),
+                None => Err(RuntimeError::new(&format!(
+                    "unknown variable: {}",
+                    variable
+                ))),
+            },
+        }
+    }
+}
+
+fn print_builtin(args: Vec<StackValue>) -> Result<(), RuntimeError> {
+    for arg in args {
+        match arg {
+            StackValue::Number(n) => print!("{}", n),
+            StackValue::Bool(b) => print!("{}", b),
+            StackValue::Closure(_, _) => print!("closure"),
+            StackValue::BuiltinFunction(_) => print!("built-in"),
+        }
+    }
+    println!();
+    Ok(())
+}
+
+fn byte_code_vm(
+    byte_code: Vec<ByteCodeInstruction>,
+    stack: &mut Vec<StackValue>,
+    frame: Rc<RefCell<StackFrame>>,
+) -> Result<(), RuntimeError> {
+    let mut position: usize = 0;
+
+    while position < byte_code.len() {
+        let instruction = &byte_code[position];
+
+        // // Uncomment for debugging (TODO: use verbose debug flag?)
+        // println!(
+        //     "{}",
+        //     format!(
+        //         "{}: {:?} stack: {:?} frame: {:?}",
+        //         position,
+        //         instruction,
+        //         stack,
+        //         frame.borrow().variables
+        //     )
+        // );
+
+        match instruction {
+            ByteCodeInstruction::PushConst(value) => stack.push(StackValue::Number(*value)),
+            ByteCodeInstruction::PushBool(value) => stack.push(StackValue::Bool(*value)),
+            ByteCodeInstruction::LoadVar(variable) => {
+                if variable == "print" {
+                    stack.push(StackValue::BuiltinFunction(print_builtin));
+                } else {
+                    stack.push(frame.borrow().look_up(variable)?)
+                }
+            }
+            ByteCodeInstruction::StoreVar(variable) => match stack.pop() {
+                None => {
+                    return Err(RuntimeError::new(&format!(
+                        "stack empty when setting {}",
+                        variable
+                    )))
+                }
+                Some(value) => frame.borrow_mut().store(variable.to_string(), value),
+            },
+            ByteCodeInstruction::Add(n) => {
+                if stack.len() < *n {
+                    return Err(RuntimeError::new(&format!(
+                        "not enough items on the stack (unreachable)"
+                    )));
+                }
+                let values: Vec<StackValue> = stack.split_off(stack.len() - n);
+
+                if values.iter().any(|v| matches!(v, StackValue::Bool(_))) {
+                    return Err(RuntimeError::new(&format!("cannot add boolean")));
+                }
+
+                let sum: f64 = values
+                    .into_iter()
+                    .map(|v| match v {
+                        StackValue::Number(num) => num,
+                        _ => unreachable!(),
+                    })
+                    .sum();
+
+                stack.push(StackValue::Number(sum));
+            }
+            ByteCodeInstruction::Sub(n) => {
+                if stack.len() < *n {
+                    return Err(RuntimeError::new(&format!(
+                        "not enough items on the stack (unreachable)"
+                    )));
+                }
+                let values: Vec<StackValue> = stack.split_off(stack.len() - n);
+
+                if values.iter().any(|v| matches!(v, StackValue::Bool(_))) {
+                    return Err(RuntimeError::new(&format!("cannot subtract boolean")));
+                }
+
+                let mut iter = values.into_iter().map(|v| match v {
+                    StackValue::Number(num) => num,
+                    _ => unreachable!(),
+                });
+
+                let first = iter.next().unwrap();
+                let difference: f64 = iter.fold(first, |acc, num| acc - num);
+
+                stack.push(StackValue::Number(difference));
+            }
+            ByteCodeInstruction::LessThan => {
+                if stack.len() < 2 {
+                    return Err(RuntimeError::new("not enough items on the stack"));
+                }
+
+                let values = stack.split_off(stack.len() - 2);
+
+                let (num1, num2) = match (&values[0], &values[1]) {
+                    (StackValue::Number(n1), StackValue::Number(n2)) => (n1, n2),
+                    _ => return Err(RuntimeError::new("cannot compare non-numeric values")),
+                };
+
+                if num1 < num2 {
+                    position += 1;
+                }
+            }
+            ByteCodeInstruction::GreaterThan => {
+                if stack.len() < 2 {
+                    return Err(RuntimeError::new("not enough items on the stack"));
+                }
+
+                let values = stack.split_off(stack.len() - 2);
+
+                let (num1, num2) = match (&values[0], &values[1]) {
+                    (StackValue::Number(n1), StackValue::Number(n2)) => (n1, n2),
+                    _ => return Err(RuntimeError::new("cannot compare non-numeric values")),
+                };
+
+                if num1 > num2 {
+                    position += 1;
+                }
+            }
+            ByteCodeInstruction::Jump(new_position) => {
+                position = *new_position;
+                continue;
+            }
+            ByteCodeInstruction::CallLambda(n) => {
+                if stack.len() < *n + 1 {
+                    return Err(RuntimeError::new("not enough items on the stack"));
+                }
+
+                match stack.pop() {
+                    Some(value) => match value {
+                        StackValue::Closure(params, closure_byte_code) => {
+                            let child_frame = StackFrame::child(Rc::clone(&frame));
+
+                            // Retrieve the arguments from the stack
+                            let args = stack.split_off(stack.len() - n);
+                            for (param, arg) in params.iter().zip(args) {
+                                child_frame.borrow_mut().store(param.clone(), arg);
+                            }
+
+                            byte_code_vm(closure_byte_code, stack, Rc::clone(&child_frame))?;
+                        }
+                        StackValue::BuiltinFunction(func) => {
+                            let args = stack.split_off(stack.len() - n);
+                            func(args)?;
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "cannot call non-closure or non-function",
+                            ))
+                        }
+                    },
+                    None => unreachable!(),
+                }
+            }
+            ByteCodeInstruction::PushClosure(params, closure_byte_code) => stack.push(
+                StackValue::Closure(params.to_vec(), closure_byte_code.clone()),
+            ),
+        }
+
+        position += 1;
+    }
+
+    Ok(())
+}
+
 fn main() {
     let mut buffer = Vec::new();
     stdin()
         .read_to_end(&mut buffer)
         .expect("error reading from stdin");
 
-    let expressions = match (program()).parse(&buffer) {
+    let mut expressions = match (program()).parse(&buffer) {
         Err(e) => {
             eprintln!("{}", e);
             exit(1);
@@ -551,16 +1001,134 @@ fn main() {
     };
 
     let args: Vec<String> = env::args().collect();
-    if args.contains(&"-o".to_string()) {
-        println!("{}", compile(optimize(expressions)));
-    } else {
+    if args.contains(&"--optimize".to_string()) {
+        expressions = optimize(expressions);
+    }
+
+    if args.contains(&"--vm".to_string()) {
+        let byte_code = compile_byte_code(expressions);
+
+        if args.contains(&"--debug".to_string()) {
+            println!("{}", debug_byte_code(byte_code.clone(), 0));
+        }
+
+        match byte_code_vm(byte_code, &mut vec![], StackFrame::new()) {
+            Err(err) => {
+                eprintln!("{}", format!("{}", err));
+                std::process::exit(1);
+            }
+            _ => {}
+        }
+    } else if args.contains(&"--js".to_string()) {
         println!("{}", compile(expressions));
+    } else {
+        println!("must pass '--vm' or '--js'");
+        process::exit(1);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_byte_code_compile() {
+        let compiled = compile_byte_code(
+            program()
+                .parse(
+                    b"(let ((fib (lambda (n)
+    (if (< n 2)
+        n
+        (+ (fib (- n 1)) (fib (- n 2)))))))
+(print (fib 10)))",
+                )
+                .unwrap(),
+        );
+        assert_eq!(format!("{:?}", compiled), "[PushClosure([\"n\"], [LoadVar(\"n\"), PushConst(2.0), LessThan, Jump(6), LoadVar(\"n\"), Jump(17), LoadVar(\"n\"), PushConst(1.0), Sub(2), LoadVar(\"fib\"), CallLambda(1), LoadVar(\"n\"), PushConst(2.0), Sub(2), LoadVar(\"fib\"), CallLambda(1), Add(2)]), StoreVar(\"fib\"), PushConst(10.0), LoadVar(\"fib\"), CallLambda(1), LoadVar(\"print\"), CallLambda(1)]");
+    }
+
+    #[test]
+    fn test_byte_code_vm_arithmetic() {
+        let compiled = compile_byte_code(program().parse(b"(+ 1 2 (- 5 100))").unwrap());
+
+        let mut stack = vec![];
+        byte_code_vm(compiled, &mut stack, StackFrame::new()).unwrap();
+        assert_eq!(format!("{:?}", stack), "[Number(-92.0)]");
+    }
+
+    #[test]
+    fn test_byte_code_vm_fib() {
+        let compiled = compile_byte_code(
+            program()
+                .parse(
+                    b"(let ((fib (lambda (n)
+    (if (< n 2)
+        n
+        (+ (fib (- n 1)) (fib (- n 2)))))))
+(fib 10))",
+                )
+                .unwrap(),
+        );
+
+        let mut stack = vec![];
+        byte_code_vm(compiled, &mut stack, StackFrame::new()).unwrap();
+        assert_eq!(format!("{:?}", stack), "[Number(55.0)]");
+    }
+
+    #[test]
+    fn test_byte_code_vm_fib_print() {
+        let compiled = compile_byte_code(
+            program()
+                .parse(
+                    b"(let ((fib (lambda (n)
+    (if (< n 2)
+        n
+        (+ (fib (- n 1)) (fib (- n 2)))))))
+(print (fib 10)))",
+                )
+                .unwrap(),
+        );
+
+        let mut stack = vec![];
+        byte_code_vm(compiled, &mut stack, StackFrame::new()).unwrap();
+
+        // Empty because print pops it
+        assert_eq!(format!("{:?}", stack), "[]");
+    }
+
+    #[test]
+    fn test_byte_code_vm_double() {
+        let compiled = compile_byte_code(
+            program()
+                .parse(
+                    b"(let ((double (lambda (x) (+ x x)))) (double 2))",
+                )
+                .unwrap(),
+        );
+
+        let mut stack = vec![];
+        byte_code_vm(compiled, &mut stack, StackFrame::new()).unwrap();
+        assert_eq!(format!("{:?}", stack), "[Number(4.0)]");
+    }
+    
+    #[test]
+    fn test_byte_code_vm_nested_lambda() {
+        let compiled = compile_byte_code(
+            program()
+                .parse(
+                    b"(let ((fib (lambda (n)
+    (if (< n 2)
+        (let ((double (lambda (x) (+ x x)))) (double n))
+        (+ (fib (- n 1)) (fib (- n 2)))))))
+(fib 10))",
+                )
+                .unwrap(),
+        );
+
+        let mut stack = vec![];
+        byte_code_vm(compiled, &mut stack, StackFrame::new()).unwrap();
+        assert_eq!(format!("{:?}", stack), "[Number(110.0)]");
+    }
 
     #[test]
     fn test_parse_atom() {
@@ -738,7 +1306,6 @@ mod tests {
             ),
             "[LetExpression(LetExpression { bindings: [], expressions: [Atom(Boolean(true))] })]"
         );
-        
     }
 }
 

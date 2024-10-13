@@ -7,11 +7,52 @@
 
 <br>
 
-This compiler optimizes Lisp code and turns it into JavaScript.
+This project is an optmizing Lisp compiler and byte code VM.
 
-Here's an example:
+It can compile to JavaScript, or compile to byte code and execute in a VM.
 
-```js
+The byte code VM is a little faster than Node.js (TODO: benchmarks).
+
+<br>
+
+Byte code VM:
+
+```
+./program --vm --debug < fib10.lisp
+   0: PushClosure(["n"])
+    ->   0: LoadVar("n")
+    ->   1: PushConst(2.0)
+    ->   2: LessThan
+    ->   3: Jump(6) // go to 6
+    ->   4: LoadVar("n")
+    ->   5: Jump(17) // exit
+    ->   6: LoadVar("n")
+    ->   7: PushConst(1.0)
+    ->   8: Sub(2)
+    ->   9: LoadVar("fib")
+    ->  10: CallLambda(1)
+    ->  11: LoadVar("n")
+    ->  12: PushConst(2.0)
+    ->  13: Sub(2)
+    ->  14: LoadVar("fib")
+    ->  15: CallLambda(1)
+    ->  16: Add(2)
+   1: StoreVar("fib")
+   2: PushConst(10.0)
+   3: LoadVar("fib")
+   4: CallLambda(1)
+   5: LoadVar("print")
+   6: CallLambda(1)
+
+55
+```
+
+<br>
+
+Compile to JavaScript:
+
+```
+./program --js < fib10.lisp
 /*
 (let ((fib (lambda (n)
     (if (< n 2)
@@ -28,7 +69,8 @@ print(fib(10));
 
 <br>
 
-The implemented optimizations are constant folding and propagation, and dead code elimination. This stage runs before code generation.
+The implemented optimizations are constant folding and propagation, and dead
+code elimination:
 
 ```lisp
 ; before optimization
@@ -72,28 +114,22 @@ a ; symbols
 
 <br>
 
-### Tests
+### Run
 
-There are tests for parsing, optimization, and code generation. 
+Required (one of):
 
-Run:
+- `--js` output JavaScript to stdout
+- `--vm` compile to byte code and execute in VM
 
-```bash
-cargo test
-```
+Optional:
+
+- `--optimize` for optimization
+- `--debug` show annotated byte code
 
 <br>
 
-### Running the Compiler
+### Tests
 
-To compile Lisp code to JavaScript, run the following command:
-
-```bash
-$ cargo run -- -o < fib10.lisp > fib10.js
-$ node fib10.js
-55
 ```
-
-Flags:
-
-- `-o` for optimization
+cargo test
+```
