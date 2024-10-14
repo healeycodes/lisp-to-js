@@ -557,11 +557,9 @@ enum ByteCodeInstruction {
 
 fn compile_byte_code(expressions: Vec<Expression>) -> Vec<ByteCodeInstruction> {
     let mut bytecode = Vec::new();
-
     for expr in expressions {
         compile_byte_code_expression(&expr, &mut bytecode);
     }
-
     bytecode
 }
 
@@ -695,41 +693,41 @@ fn debug_byte_code(byte_code: Vec<ByteCodeInstruction>, depth: usize) -> String 
         }
         match instruction {
             ByteCodeInstruction::PushConst(value) => {
-                output.push_str(&format!("{:>4}: PushConst({:.1})\n", index, value));
+                output.push_str(&format!("{:>4}: push_const {:.1}\n", index, value));
             }
             ByteCodeInstruction::PushBool(value) => {
-                output.push_str(&format!("{:>4}: PushBool({})\n", index, value));
+                output.push_str(&format!("{:>4}: push_bool {}\n", index, value));
             }
             ByteCodeInstruction::LoadVar(var_name) => {
-                output.push_str(&format!("{:>4}: LoadVar(\"{}\")\n", index, var_name));
+                output.push_str(&format!("{:>4}: load_var {}\n", index, var_name));
             }
             ByteCodeInstruction::StoreVar(var_name) => {
-                output.push_str(&format!("{:>4}: StoreVar(\"{}\")\n", index, var_name));
+                output.push_str(&format!("{:>4}: store_var {}\n", index, var_name));
             }
             ByteCodeInstruction::Add(n) => {
-                output.push_str(&format!("{:>4}: Add({})\n", index, n));
+                output.push_str(&format!("{:>4}: add {}\n", index, n));
             }
             ByteCodeInstruction::Sub(n) => {
-                output.push_str(&format!("{:>4}: Sub({})\n", index, n));
+                output.push_str(&format!("{:>4}: sub {}\n", index, n));
             }
             ByteCodeInstruction::LessThan => {
-                output.push_str(&format!("{:>4}: LessThan\n", index));
+                output.push_str(&format!("{:>4}: less_than\n", index));
             }
             ByteCodeInstruction::GreaterThan => {
-                output.push_str(&format!("{:>4}: GreaterThan\n", index));
+                output.push_str(&format!("{:>4}: greater_than\n", index));
             }
             ByteCodeInstruction::Jump(target) => {
                 let detail = match target >= &byte_code.len() {
                     true => "exit",
                     false => &format!("go to {}", target),
                 };
-                output.push_str(&format!("{:>4}: Jump({}) // {}\n", index, target, detail));
+                output.push_str(&format!("{:>4}: jump {} // {}\n", index, target, detail));
             }
             ByteCodeInstruction::CallLambda(arg_count) => {
-                output.push_str(&format!("{:>4}: CallLambda({})\n", index, arg_count));
+                output.push_str(&format!("{:>4}: call_lambda {}\n", index, arg_count));
             }
             ByteCodeInstruction::PushClosure(params, instructions) => {
-                output.push_str(&format!("{:>4}: PushClosure({:?})\n", index, params));
+                output.push_str(&format!("{:>4}: push_closure {:?}\n", index, params));
                 output.push_str(&debug_byte_code(instructions.to_vec(), depth + 1));
             }
         }
@@ -1100,9 +1098,7 @@ mod tests {
     fn test_byte_code_vm_double() {
         let compiled = compile_byte_code(
             program()
-                .parse(
-                    b"(let ((double (lambda (x) (+ x x)))) (double 2))",
-                )
+                .parse(b"(let ((double (lambda (x) (+ x x)))) (double 2))")
                 .unwrap(),
         );
 
@@ -1110,7 +1106,7 @@ mod tests {
         byte_code_vm(compiled, &mut stack, StackFrame::new()).unwrap();
         assert_eq!(format!("{:?}", stack), "[Number(4.0)]");
     }
-    
+
     #[test]
     fn test_byte_code_vm_nested_lambda() {
         let compiled = compile_byte_code(
