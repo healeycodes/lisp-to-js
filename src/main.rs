@@ -636,32 +636,33 @@ fn compile_byte_code_if(if_expr: &IfExpression, bytecode: &mut Vec<ByteCodeInstr
     // Compile the condition expression
     compile_byte_code_expression(&if_expr.check, bytecode);
 
-    // Placeholder index for JumpIfFalse, to be patched later
+    // Placeholder index for jump_if_false, to be patched later
     let jump_if_false_pos = bytecode.len();
-    bytecode.push(ByteCodeInstruction::Jump(0)); // Placeholder
+    bytecode.push(ByteCodeInstruction::Jump(0)); // Placeholder for jump to start of false branch if condition is false
 
     // Compile the true branch
     compile_byte_code_expression(&if_expr.r#true, bytecode);
 
-    // Placeholder index for Jump, to skip the false branch
-    let jump_pos = bytecode.len();
-    bytecode.push(ByteCodeInstruction::Jump(0)); // Placeholder
+    // Placeholder index for jump_over_false, to skip the false branch after true branch is executed
+    let jump_over_false_pos = bytecode.len();
+    bytecode.push(ByteCodeInstruction::Jump(0)); // Placeholder for jump over false branch after true branch
 
-    // Patch the JumpIfFalse instruction to jump to the false branch
-    let current_pos = bytecode.len();
-    if let ByteCodeInstruction::Jump(ref mut jump_pos) = bytecode[jump_if_false_pos] {
-        *jump_pos = current_pos;
+    // Patch the jump_if_false instruction to jump to the false branch
+    let false_branch_pos = bytecode.len();
+    if let ByteCodeInstruction::Jump(ref mut target) = bytecode[jump_if_false_pos] {
+        *target = false_branch_pos;
     }
 
     // Compile the false branch
     compile_byte_code_expression(&if_expr.r#false, bytecode);
 
-    // Patch the Jump instruction to jump past the false branch
-    let current_pos = bytecode.len();
-    if let ByteCodeInstruction::Jump(ref mut jump_pos) = bytecode[jump_pos] {
-        *jump_pos = current_pos;
+    // Patch the jump instruction to jump past the false branch
+    let end_pos = bytecode.len();
+    if let ByteCodeInstruction::Jump(ref mut target) = bytecode[jump_over_false_pos] {
+        *target = end_pos;
     }
 }
+
 
 fn compile_byte_code_arithmetic(
     arith_expr: &ArithmeticExpression,
