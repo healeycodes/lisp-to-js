@@ -2,6 +2,7 @@
 
 > My blog posts:
 >
+> - [Compiling Lisp to Bytecode and Running It](https://healeycodes.com/compiling-lisp-to-bytecode-and-running-it)
 > - [Lisp to JavaScript Compiler](https://healeycodes.com/lisp-to-javascript-compiler)
 > - [Lisp Compiler Optimizations](https://healeycodes.com/lisp-compiler-optimizations)
 
