@@ -7,15 +7,15 @@
 
 <br>
 
-This project is an optmizing Lisp compiler and byte code VM.
+This project is an optmizing Lisp compiler and bytecode VM.
 
-It can compile to JavaScript, or compile to byte code and execute in a VM.
+It can compile to JavaScript, or compile to bytecode and execute in a VM.
 
-The byte code VM is a little faster than Node.js (TODO: benchmarks).
+The bytecode VM is a little faster than Node.js (TODO: benchmarks).
 
 <br>
 
-Byte code VM:
+Bytecode VM:
 
 ```
 ./program --vm --debug < fib10.lisp
@@ -119,12 +119,12 @@ a ; symbols
 Required (one of):
 
 - `--js` output JavaScript to stdout
-- `--vm` compile to byte code and execute in VM
+- `--vm` compile to bytecode and execute in VM
 
 Optional:
 
 - `--optimize` for optimization
-- `--debug` show annotated byte code
+- `--debug` show annotated bytecode
 
 <br>
 

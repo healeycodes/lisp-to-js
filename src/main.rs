@@ -663,7 +663,6 @@ fn compile_byte_code_if(if_expr: &IfExpression, bytecode: &mut Vec<ByteCodeInstr
     }
 }
 
-
 fn compile_byte_code_arithmetic(
     arith_expr: &ArithmeticExpression,
     bytecode: &mut Vec<ByteCodeInstruction>,
@@ -944,7 +943,7 @@ fn byte_code_vm(
                 continue;
             }
             ByteCodeInstruction::CallLambda(n) => {
-                if stack.len() < *n + 1 {
+                if stack.len() <= *n {
                     return Err(RuntimeError::new("not enough items on the stack"));
                 }
 
