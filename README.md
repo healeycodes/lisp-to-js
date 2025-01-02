@@ -12,8 +12,6 @@ This project is an optmizing Lisp compiler and bytecode VM.
 
 It can compile to JavaScript, or compile to bytecode and execute in a VM.
 
-The bytecode VM is a little faster than Node.js (TODO: benchmarks).
-
 <br>
 
 Bytecode VM:
