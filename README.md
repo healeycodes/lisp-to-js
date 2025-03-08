@@ -18,32 +18,30 @@ Bytecode VM:
 
 ```
 ./program --vm --debug < fib10.lisp
-   0: PushClosure(["n"])
-    ->   0: LoadVar("n")
-    ->   1: PushConst(2.0)
-    ->   2: LessThan
-    ->   3: Jump(6) // go to 6
-    ->   4: LoadVar("n")
-    ->   5: Jump(17) // exit
-    ->   6: LoadVar("n")
-    ->   7: PushConst(1.0)
-    ->   8: Sub(2)
-    ->   9: LoadVar("fib")
-    ->  10: CallLambda(1)
-    ->  11: LoadVar("n")
-    ->  12: PushConst(2.0)
-    ->  13: Sub(2)
-    ->  14: LoadVar("fib")
-    ->  15: CallLambda(1)
-    ->  16: Add(2)
-   1: StoreVar("fib")
-   2: PushConst(10.0)
-   3: LoadVar("fib")
-   4: CallLambda(1)
-   5: LoadVar("print")
-   6: CallLambda(1)
-
-55
+   0: push_closure ["n"]
+    ->   0: load_var n
+    ->   1: push_const 2.0
+    ->   2: less_than
+    ->   3: jump 6 // go to 6
+    ->   4: load_var n
+    ->   5: jump 17 // exit
+    ->   6: load_var n
+    ->   7: push_const 1.0
+    ->   8: sub 2
+    ->   9: load_var fib
+    ->  10: call_lambda 1
+    ->  11: load_var n
+    ->  12: push_const 2.0
+    ->  13: sub 2
+    ->  14: load_var fib
+    ->  15: call_lambda 1
+    ->  16: add 2
+   1: store_var fib
+   2: push_const 10.0
+   3: load_var fib
+   4: call_lambda 1
+   5: load_var print
+   6: call_lambda 1
 ```
 
 <br>
@@ -52,18 +50,16 @@ Compile to JavaScript:
 
 ```
 ./program --js < fib10.lisp
-/*
-(let ((fib (lambda (n)
-    (if (< n 2)
-        n
-        (+ (fib (- n 1)) (fib (- n 2)))))))
-(print (fib 10)))
-*/
-
+/* lisp-to-js */
 let print = console.log;
 
-let fib = (n) => n < 2 ? n : (fib(n - 1) + fib(n - 2));
-print(fib(10));
+
+(() => {
+let fib =  ((n) =>  n  < 2 ?  n  : ( fib (( n -1), )+ fib (( n -2), ))
+
+)
+; print ( fib (10, ), )
+})()
 ```
 
 <br>
